@@ -1,3 +1,4 @@
+import os
 import asyncio
 from typing import Final
 from telegram import Update
@@ -5,6 +6,10 @@ from telegram.ext import Application, Updater, CommandHandler, ContextTypes, Mes
 from telegram import ReplyKeyboardMarkup, KeyboardButton
 from datetime import datetime, timedelta
 from typing import Final, Dict
+
+TOKEN: Final = os.getenv('TELEGRAM_TOKEN')  # Use environment variable for security
+PORT: Final = int(os.getenv('PORT', '8443'))  # Use environment variable or default to 8443
+
 
 TOKEN: Final = '7142977655:AAF_LqsngKsGeY7c3_szb2pPY1_DhDVXo6I'
 BOT_USERNAME: Final = '@eFootball_Tournamentsbot'
