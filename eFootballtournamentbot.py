@@ -7,11 +7,7 @@ from telegram import ReplyKeyboardMarkup, KeyboardButton
 from datetime import datetime, timedelta
 from typing import Final, Dict
 
-TOKEN: Final = os.getenv('TELEGRAM_TOKEN')  # Use environment variable for security
-PORT: Final = int(os.getenv('PORT', '8443'))  # Use environment variable or default to 8443
-
-
-TOKEN: Final = '7142977655:AAF_LqsngKsGeY7c3_szb2pPY1_DhDVXo6I'
+TOKEN: Final = os.getenv('TELEGRAM_TOKEN') or '7142977655:AAF_LqsngKsGeY7c3_szb2pPY1_DhDVXo6I'
 BOT_USERNAME: Final = '@eFootball_Tournamentsbot'
 
 # Dictionary to store registered users (adjusted to store usernames)
@@ -184,6 +180,9 @@ async def error(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
 
+    PORT: Final = int(os.getenv('PORT', '8443'))  # Use environment variable or default to 8443
+
+
     print('Starting bot....')
     app = Application.builder().token(TOKEN).build()
 
@@ -199,7 +198,8 @@ def main():
     # Errors
     app.add_error_handler(error)
 
-    print('Polling....')
-    app.run_polling(poll_interval=3)
+    app.run_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN)
+    print(f"Bot is now running on port {PORT}")
 
-main()
+if __name__ == "__main__":
+    main()
