@@ -198,7 +198,8 @@ def main():
     # Errors
     app.add_error_handler(error)
 
-    app.run_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN)
+    app.run_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN, webhook_url="https://telegram-bot-34hg.onrender.com/7142977655:AAF_LqsngKsGeY7c3_szb2pPY1_DhDVXo6I")
+
     print(f"Bot is now running on port {PORT}")
 
 if __name__ == "__main__":
