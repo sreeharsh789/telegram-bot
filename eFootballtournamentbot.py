@@ -7,6 +7,7 @@ from telegram import ReplyKeyboardMarkup, KeyboardButton
 from datetime import datetime, timedelta
 from typing import Final, Dict
 
+
 TOKEN: Final = os.getenv('TELEGRAM_TOKEN') or '7142977655:AAF_LqsngKsGeY7c3_szb2pPY1_DhDVXo6I'
 BOT_USERNAME: Final = '@eFootball_Tournamentsbot'
 
@@ -26,18 +27,25 @@ user_last_register_time: Dict[int, datetime] = {}
 # Dictionary to store the warning count for each user
 user_warning_count: Dict[int, int] = {}
 
+# Flag to track invitation requirement fulfillment for the current cycle
+invitation_met = False
+
+
 async def reset_tournament_slots_after_delay():
-    global tournament_slots
+    global tournament_slots, invitation_met
     # Wait for 10 minutes (600 seconds)
-    await asyncio.sleep(10 * 60)
+    await asyncio.sleep(1 * 60)
     # Reset tournament slots
     tournament_slots = {1: None, 2: None}
+    # Reset invitation flag for the new cycle
+    invitation_met = False
     # Notify the group that slots have been reset
     print("Tournament slots have been reset.")
 
+
 # Function to handle the /register command
 async def register_command(update: Update, context: CallbackContext) -> None:
-    global tournament_slots, registered_user_ids, user_last_register_time
+    global tournament_slots, registered_user_ids, user_last_register_time, invitation_met
 
     # Get the user and their ID
     user = update.effective_user
@@ -46,28 +54,18 @@ async def register_command(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("Please set your username first to register for the tournament.")
         return
 
-
     # Get the number of users the user has invited
     invited_users = invited_count.get(user_id, 0)
-
-    # Check if the user has invited at least 2 members to the group
-    if invited_users < 2:
-        # Calculate how many more users the user needs to invite
-        users_needed = 2 - invited_users
-
-        # Provide feedback to the user
-        await update.message.reply_text(f"You need to add {users_needed} more {'user' if users_needed == 1 else 'users'} to the group before you can register.")
-        return
 
     # Check cooldown period (5 minutes)
     now = datetime.utcnow()
     last_register_time = user_last_register_time.get(user_id)
-    if last_register_time and now - last_register_time < timedelta(minutes=10):
-        cooldown_remaining = (last_register_time + timedelta(minutes=10)) - now
+    if last_register_time and now - last_register_time < timedelta(minutes=1):
+        cooldown_remaining = (last_register_time + timedelta(minutes=1)) - now
         await update.message.reply_text(f"You can register again in {cooldown_remaining.seconds // 60} minutes and {cooldown_remaining.seconds % 60} seconds.")
         return
 
-        # Update user's last registration time
+    # Update user's last registration time
     user_last_register_time[user_id] = now
 
     # Check if all slots are full
@@ -79,7 +77,22 @@ async def register_command(update: Update, context: CallbackContext) -> None:
     # Find an empty slot
     empty_slot = next((slot for slot, value in tournament_slots.items() if value is None), None)
     if empty_slot is not None:
+        # Check invitation requirement only if not met yet
+        if not invitation_met:
+            # Existing invitation count check
+            if invited_users < 2:
+                # Calculate how many more users the user needs to invite
+                users_needed = 2 - invited_users
+
+                # Send message about needing more invites
+                await update.message.reply_text(f"You need to add {users_needed} more {'user' if users_needed == 1 else 'users'} to the group before you can register.")
+                return
+
+            # User meets invitation requirement (can be adjusted based on your logic)
+            invitation_met = True  # Set flag after successful invitation check
+
         tournament_slots[empty_slot] = user.username
+        # Add user ID to registered set for the current
         # Add user ID to registered set for the current tournament
         current_tournament_id = get_current_tournament_id()
         registered_user_ids.setdefault(current_tournament_id, set()).add(user_id)
