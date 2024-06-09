@@ -28,7 +28,7 @@ user_warning_count: Dict[int, int] = {}
 async def reset_tournament_slots_after_delay():
     global tournament_slots
     # Wait for 10 minutes (600 seconds)
-    await asyncio.sleep(1 * 60)
+    await asyncio.sleep(10 * 60)
     # Reset tournament slots
     tournament_slots = {1: None, 2: None}
     # Notify the group that slots have been reset
@@ -60,8 +60,8 @@ async def register_command(update: Update, context: CallbackContext) -> None:
     # Check cooldown period (10 minutes)
     now = datetime.utcnow()
     last_register_time = user_last_register_time.get(user_id)
-    if last_register_time and now - last_register_time < timedelta(minutes=1):
-        cooldown_remaining = (last_register_time + timedelta(minutes=1)) - now
+    if last_register_time and now - last_register_time < timedelta(minutes=10):
+        cooldown_remaining = (last_register_time + timedelta(minutes=10)) - now
         await update.message.reply_text(f"You can register again in {cooldown_remaining.seconds // 60} minutes and {cooldown_remaining.seconds % 60} seconds.")
         return
 
