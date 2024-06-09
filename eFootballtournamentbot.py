@@ -45,14 +45,6 @@ async def register_command(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("Please set your username first to register for the tournament.")
         return
 
-    # Check cooldown period (10 minutes)
-    now = datetime.utcnow()
-    last_register_time = user_last_register_time.get(user_id)
-    if last_register_time and now - last_register_time < timedelta(minutes=1):
-        cooldown_remaining = (last_register_time + timedelta(minutes=1)) - now
-        await update.message.reply_text(f"You can register again in {cooldown_remaining.seconds // 60} minutes and {cooldown_remaining.seconds % 60} seconds.")
-        return
-
     # Get the number of users the user has invited
     invited_users = invited_count.get(user_id, 0)
 
@@ -65,14 +57,13 @@ async def register_command(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(f"You need to add {users_needed} more {'user' if users_needed == 1 else 'users'} to the group before you can register.")
         return
 
-    # Update user's last registration time
-    user_last_register_time[user_id] = now
-
-    # Check if all slots are full
-    if all(tournament_slots.values()):
-        # Reset all slots to empty and clear registered users for the current tournament
-        tournament_slots = {1: None, 2: None}
-        registered_user_ids.pop(get_current_tournament_id(), None)  # Clear if current ID exists
+    # Check cooldown period (10 minutes)
+    now = datetime.utcnow()
+    last_register_time = user_last_register_time.get(user_id)
+    if last_register_time and now - last_register_time < timedelta(minutes=1):
+        cooldown_remaining = (last_register_time + timedelta(minutes=1)) - now
+        await update.message.reply_text(f"You can register again in {cooldown_remaining.seconds // 60} minutes and {cooldown_remaining.seconds % 60} seconds.")
+        return
 
     # Find an empty slot
     empty_slot = next((slot for slot, value in tournament_slots.items() if value is None), None)
@@ -88,6 +79,9 @@ async def register_command(update: Update, context: CallbackContext) -> None:
 
         # Schedule a task to reset the slots after 10 minutes
         asyncio.create_task(reset_tournament_slots_after_delay())
+
+        # Update user's last registration time after successful registration
+        user_last_register_time[user_id] = now
 
     else:
         await update.message.reply_text("All slots are currently full.")
@@ -190,7 +184,7 @@ def main():
     # Errors
     app.add_error_handler(error)
 
-    app.run_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN, webhook_url="https://telegram-bot-34hg.onrender.com/7142977655:AAF_LqsngKsGeY7c3_szb2pPY1_DhDVXo6I")
+    app.run_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN, webhook_url=f"https://telegram-bot-34hg.onrender.com/{TOKEN}")
 
     print(f"Bot is now running on port {PORT}")
 
