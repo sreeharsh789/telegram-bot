@@ -5,7 +5,7 @@ from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackContext
 from datetime import datetime, timedelta
 
-TOKEN: Final = os.getenv('TELEGRAM_TOKEN') or 'YOUR_TELEGRAM_TOKEN_HERE'
+TOKEN: Final = os.getenv('TELEGRAM_TOKEN') or '7142977655:AAF_LqsngKsGeY7c3_szb2pPY1_DhDVXo6I'
 BOT_USERNAME: Final = '@eFootball_Tournamentsbot'
 
 # Dictionary to store registered users (adjusted to store usernames)
@@ -164,7 +164,7 @@ def main():
     # Errors
     app.add_error_handler(error)
 
-    app.run_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN, webhook_url=f"https://your-webhook-url/{TOKEN}")
+    app.run_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN, webhook_url=f"https://telegram-bot-34hg.onrender.com/{TOKEN}")
 
     print(f"Bot is now running on port {PORT}")
 
