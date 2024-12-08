@@ -51,7 +51,7 @@ async def register_command(update: Update, context: CallbackContext) -> None:
 
         # Send the message with the button
         await update.message.reply_text(
-            "Please set your username first to register for the tournament.",
+            "sreeju set your username first to register for the tournament.",
             reply_markup=reply_markup
         )
         return
