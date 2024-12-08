@@ -43,17 +43,7 @@ async def register_command(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = user.id
     if not user.username:
-        # Create an inline keyboard with a button to direct to pinned message
-        keyboard = [
-            [InlineKeyboardButton("How to create a username", url="https://t.me/efootball_paid_tournament/3059")]  # Replace with your pinned message URL
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        # Send the message with the button
-        await update.message.reply_text(
-            "sreeju set your username first to register for the tournament.",
-            reply_markup=reply_markup
-        )
+        await update.message.reply_text("Please set your username first to register for the tournament.")
         return
 
 
