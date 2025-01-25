@@ -60,13 +60,21 @@ async def register_command(update: Update, context: CallbackContext):
 
     user_id = update.effective_user.id
 
+    # Check if the user is already registered
+    if user_id in slots:
+        await update.message.reply_text("You are already registered for the current slot.")
+        return
+
     # Add the user to the slot
     slots.append(user_id)
 
     # Check if the slot is full
     if len(slots) == MAX_PLAYERS_PER_SLOT:
-        # Slot is full, reset the slots
+        # Notify that the current slot is full and reset for the next slot
         slots = []  # Reset the slots for the next set of players
+    else:
+        # Wait for more players to fill the current slot
+        pass
         
     global user_last_register_time, first_time_users, interacted_users
 
