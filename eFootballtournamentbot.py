@@ -51,7 +51,7 @@ async def reset_tournament_slots_after_delay():
 
 
 # Global variables to track slots and players
-slots = []  # List to store registered players
+slots = []  # List to store registered players in the current slot
 MAX_PLAYERS_PER_SLOT = 2  # Maximum players per slot
 
 # Registration command handler
@@ -65,8 +65,8 @@ async def register_command(update: Update, context: CallbackContext):
 
     # Check if the slot is full
     if len(slots) == MAX_PLAYERS_PER_SLOT:
-        # Reset the slots after 2 players
-        slots = []
+        # Slot is full, reset the slots
+        slots = []  # Reset the slots for the next set of players
         
     global user_last_register_time, first_time_users, interacted_users
 
