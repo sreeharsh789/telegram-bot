@@ -1,1 +1,1 @@
-web: ./start.sh
+web: gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 2 --timeout 120 gateway:app & python3 bot.py
