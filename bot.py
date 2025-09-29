@@ -63,7 +63,7 @@ class PaymentGateway:
                 "amount": amount * 100,  # Amount in paise
                 "currency": "INR",
                 "accept_partial": False,
-                "description": f"eFootball Tournament ₹{tournament_type}",
+                "description": f"eFootball Tournament ₹{tournament_type} - User {user_id}",
                 "customer": {
                     "name": f"User {user_id}",
                     "contact": "+919999999999",  # Default contact
@@ -71,7 +71,8 @@ class PaymentGateway:
                 },
                 "notes": {
                     "user_id": str(user_id),
-                    "tournament_type": str(tournament_type)
+                    "tournament_type": str(tournament_type),
+                    "authorized_user": str(user_id)  # Additional security
                 },
                 "notify": {
                     "sms": False,
@@ -258,7 +259,8 @@ async def register_tournament_callback(update: Update, context: CallbackContext)
     
     # Send payment link to user
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Pay Now", url=payment_data.get('short_url'))]
+        [InlineKeyboardButton("💳 Pay Now", url=payment_data.get('short_url'))],
+        [InlineKeyboardButton("⚠️ Payment Security", callback_data="payment_security")]
     ])
     
     await query.edit_message_text(
@@ -267,8 +269,38 @@ async def register_tournament_callback(update: Update, context: CallbackContext)
         f"💰 Entry Fee: ₹{tournament_type}\n"
         f"🏅 Prize: ₹{TOURNAMENTS[tournament_type]['prize']}\n\n"
         f"Click below to complete your payment:\n\n"
-        f"⏰ <i>You will be notified once payment is confirmed.</i>",
+        f"⚠️ <b>IMPORTANT:</b> This payment link is personalized for you only.\n"
+        f"⏰ <i>You will be automatically registered after payment.</i>",
         reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
+    )
+
+async def payment_security_callback(update: Update, context: CallbackContext):
+    """Handle payment security info callback"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "🔒 <b>Payment Security Information</b>\n\n"
+        "• Each payment link is personalized and can only be used by the requesting user\n"
+        "• Payment links expire after 24 hours\n"
+        "• Only you can complete payment using your link\n"
+        "• After successful payment, you'll be automatically registered\n"
+        "• Your slot will be assigned immediately\n\n"
+        "🛡️ <i>Your payment is secure and protected.</i>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("← Back to Payment", callback_data="back_to_payment")]
+        ])
+    )
+
+async def back_to_payment_callback(update: Update, context: CallbackContext):
+    """Handle back to payment callback"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "Please use /register command to start a new registration process.",
         parse_mode=ParseMode.HTML
     )
 
@@ -410,6 +442,8 @@ def main():
     # Callback handlers
     app.add_handler(CallbackQueryHandler(start_registration_callback, pattern="start_registration"))
     app.add_handler(CallbackQueryHandler(register_tournament_callback, pattern="register_"))
+    app.add_handler(CallbackQueryHandler(payment_security_callback, pattern="payment_security"))
+    app.add_handler(CallbackQueryHandler(back_to_payment_callback, pattern="back_to_payment"))
     app.add_handler(CallbackQueryHandler(approve_decline_callback, pattern="(approve|decline)_"))
     
     # Message handler

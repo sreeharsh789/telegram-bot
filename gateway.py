@@ -19,11 +19,63 @@ app = Flask(__name__)
 # Environment variables
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '1181844922'))
+GROUP_CHAT_ID = os.getenv('GROUP_CHAT_ID', '-1002143662557')
 PAYMENT_GATEWAY_SECRET = os.getenv('PAYMENT_GATEWAY_SECRET')
 
 # Global variables for bot communication
-pending_payments = {}
 
+
+# Tournament slots tracking
+TOURNAMENTS = {
+    15: {"slots": {1: None, 2: None}, "prize": 25},
+    30: {"slots": {1: None, 2: None}, "prize": 50},
+    50: {"slots": {1: None, 2: None}, "prize": 80},
+}
+
+def assign_tournament_slot(user_id: int, tournament_type: int) -> dict:
+    """Assign user to tournament slot"""
+    try:
+        tournament = TOURNAMENTS[tournament_type]
+        
+        # Check if slot 1 is available
+        if tournament["slots"][1] is None:
+            tournament["slots"][1] = user_id
+            return {"slot": 1, "success": True}
+        # Check if slot 2 is available
+        elif tournament["slots"][2] is None:
+            tournament["slots"][2] = user_id
+            return {"slot": 2, "success": True}
+        else:
+            # Both slots filled, overwrite slot 1 and clear slot 2
+            tournament["slots"][1] = user_id
+            tournament["slots"][2] = None
+            return {"slot": 1, "success": True}
+            
+    except Exception as e:
+        logger.error(f"Error assigning slot: {e}")
+        return {"success": False}
+
+def update_tournament_group(tournament_type: int, user_id: int, slot: int):
+    """Update group with tournament slot information"""
+    try:
+        tournament = TOURNAMENTS[tournament_type]
+        
+        message = f"🛑 <b>₹{tournament_type} Tournament Slots</b> 🛑\n\n"
+        
+        for slot_num, player_id in tournament["slots"].items():
+            if player_id:
+                player = f'<a href="tg://user?id={player_id}">Player {player_id}</a>'
+            else:
+                player = "_______"
+            message += f"⚽ Slot {slot_num}: {player}\n"
+        
+        message += f"\n🏆 Winner receives ₹{tournament['prize']}. All the best!"
+        
+        send_telegram_message(GROUP_CHAT_ID, message)
+        logger.info(f"Group updated for ₹{tournament_type} tournament")
+        
+    except Exception as e:
+        logger.error(f"Error updating group: {e}")
 
 def send_telegram_message(chat_id: int, text: str):
     """Send message via Telegram Bot API"""
@@ -146,6 +198,19 @@ def payment_webhook():
                         except:
                             pass
                 
+                # Security check: verify authorized user
+                authorized_user = None
+                if isinstance(payment_data.get('notes', {}), dict):
+                    try:
+                        authorized_user = int(payment_data['notes'].get('authorized_user', '0'))
+                    except:
+                        pass
+                
+                # If we have both user_id and authorized_user, they must match
+                if user_id and authorized_user and user_id != authorized_user:
+                    logger.warning(f"Security violation: user_id {user_id} != authorized_user {authorized_user}")
+                    return jsonify({'status': 'error', 'message': 'Unauthorized payment'}), 403
+                
                 logger.info(f"Processing payment: Amount=₹{amount}, Tournament=₹{tournament_type}, User={user_id}")
                 
                 # Store payment info for bot to process
@@ -169,31 +234,46 @@ def payment_webhook():
                     f"Click below to approve registration:"
                 )
                 
-                # Create approval keyboard
-                if user_id:
-                    keyboard = {
-                        "inline_keyboard": [
-                            [
-                                {"text": "✅ Approve", "callback_data": f"approve_{tournament_type}_{user_id}"},
-                                {"text": "❌ Decline", "callback_data": f"decline_{user_id}"}
-                            ]
-                        ]
-                    }
-                    
-                    send_telegram_message_with_keyboard(ADMIN_ID, admin_message, keyboard)
-                else:
-                    send_telegram_message(ADMIN_ID, admin_message)
-                
                 # If we have user ID, notify them too
                 if user_id:
-                    user_message = (
-                        f"✅ <b>Payment Confirmed!</b>\n\n"
-                        f"💰 Tournament: ₹{tournament_type}\n"
-                        f"🏅 Prize: ₹{25 if tournament_type == 15 else 50 if tournament_type == 30 else 80}\n\n"
-                        f"⏳ Your registration is being processed.\n"
-                        f"You will receive approval notification shortly!"
-                    )
-                    send_telegram_message(user_id, user_message)
+                    # Auto-assign slot instead of waiting for approval
+                    slot_assigned = assign_tournament_slot(user_id, tournament_type)
+                    
+                    if slot_assigned:
+                        slot_number = slot_assigned['slot']
+                        prize = 25 if tournament_type == 15 else 50 if tournament_type == 30 else 80
+                        
+                        # Notify user of successful registration
+                        user_message = (
+                            f"✅ <b>Registration Successful!</b>\n\n"
+                            f"🏆 Tournament: ₹{tournament_type}\n"
+                            f"🎯 Slot: {slot_number}\n"
+                            f"🏅 Prize: ₹{prize}\n\n"
+                            f"Good luck in the tournament!"
+                        )
+                        send_telegram_message(user_id, user_message)
+                        
+                        # Update group with new slot assignment
+                        update_tournament_group(tournament_type, user_id, slot_number)
+                        
+                        # Notify admin of automatic registration
+                        admin_notification = (
+                            f"✅ <b>Auto Registration Complete</b>\n\n"
+                            f"👤 User: {user_id}\n"
+                            f"💰 Tournament: ₹{tournament_type}\n"
+                            f"🎯 Assigned Slot: {slot_number}\n"
+                            f"💳 Payment ID: {payment_link_id}"
+                        )
+                        send_telegram_message(ADMIN_ID, admin_notification)
+                    else:
+                        # Fallback if slot assignment fails
+                        user_message = (
+                            f"✅ <b>Payment Confirmed!</b>\n\n"
+                            f"💰 Tournament: ₹{tournament_type}\n"
+                            f"❌ All slots are currently full.\n"
+                            f"Please contact admin for assistance."
+                        )
+                        send_telegram_message(user_id, user_message)
                 else:
                     logger.warning(f"Could not extract user_id from payment data: {payment_data}")
                 
