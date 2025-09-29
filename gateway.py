@@ -7,6 +7,8 @@ import requests
 import hmac
 import hashlib
 import json
+import asyncio
+import threading
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -19,8 +21,6 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '1181844922'))
 PAYMENT_GATEWAY_SECRET = os.getenv('PAYMENT_GATEWAY_SECRET')
 
-# Import bot functions (this would need to be restructured in a real implementation)
-# For now, we'll create a simple notification system
 
 def send_telegram_message(chat_id: int, text: str):
     """Send message via Telegram Bot API"""
@@ -69,7 +69,7 @@ def payment_webhook():
         signature = request.headers.get('X-Razorpay-Signature', '')
         
         # Verify signature (for Razorpay)
-        if not verify_razorpay_signature(payload, signature, PAYMENT_GATEWAY_SECRET):
+        if PAYMENT_GATEWAY_SECRET and not verify_razorpay_signature(payload, signature, PAYMENT_GATEWAY_SECRET):
             logger.warning("Invalid webhook signature")
             return jsonify({'error': 'Invalid signature'}), 400
         
@@ -89,6 +89,7 @@ def payment_webhook():
             payment_link_id = payment_data.get('id')
             amount = payment_data.get('amount', 0) // 100  # Convert from paise to rupees
             status = payment_data.get('status')
+            customer_details = payment_data.get('customer', {})
             
             # Determine tournament type based on amount
             tournament_type = None
@@ -100,17 +101,38 @@ def payment_webhook():
                 tournament_type = 50
             
             if tournament_type and status == 'paid':
-                # Notify admin about successful payment
+                # Extract user ID from customer details or description
+                user_id = None
+                description = payment_data.get('description', '')
+                if 'User ' in description:
+                    try:
+                        user_id = int(description.split('User ')[1].split(' ')[0])
+                    except:
+                        pass
+                
+                # Notify both user and admin about successful payment
                 message = (
                     f"💳 <b>Payment Received!</b>\n\n"
                     f"💰 Amount: ₹{amount}\n"
                     f"🏆 Tournament: ₹{tournament_type}\n"
                     f"🆔 Payment ID: {payment_link_id}\n"
+                    f"👤 User ID: {user_id}\n"
                     f"⏰ Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC\n\n"
-                    f"Please check the bot for registration approval."
+                    f"Processing registration approval..."
                 )
                 
                 send_telegram_message(ADMIN_ID, message)
+                
+                # If we have user ID, notify them too
+                if user_id:
+                    user_message = (
+                        f"✅ <b>Payment Confirmed!</b>\n\n"
+                        f"💰 Tournament: ₹{tournament_type}\n"
+                        f"🏅 Prize Pool: ₹{50 if tournament_type == 30 else 80 if tournament_type == 50 else 25}\n\n"
+                        f"⏳ Your registration is being processed.\n"
+                        f"You will receive approval notification shortly!"
+                    )
+                    send_telegram_message(user_id, user_message)
                 
                 logger.info(f"Payment processed: ₹{amount} for tournament ₹{tournament_type}")
                 
@@ -189,7 +211,8 @@ def payment_success():
                 <div class="success-icon">✅</div>
                 <h1>Payment Successful!</h1>
                 <p>Your payment has been processed successfully. Your tournament registration is now pending admin approval.</p>
-                <p>You will receive a notification in the bot once your registration is approved.</p>
+                <p><strong>You will receive a notification in the bot within a few minutes once your registration is approved.</strong></p>
+                <p>Please return to the Telegram bot to check your registration status.</p>
                 <a href="https://t.me/eFootball_Tournamentsbot" class="btn">Return to Bot</a>
             </div>
         </body>

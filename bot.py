@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 import requests
 import json
 import logging
+import threading
+from queue import Queue
 
 # Configure logging
 logging.basicConfig(
@@ -50,6 +52,10 @@ interacted_users = set()
 first_time_users = set()
 waiting_approvals: Dict[int, List[int]] = {15: [], 30: [], 50: []}
 payment_transactions: Dict[str, Dict] = {}
+
+# Global application instance for webhook communication
+bot_application = None
+payment_queue = Queue()
 
 class PaymentGateway:
     """Payment gateway integration (Razorpay example)"""
@@ -279,7 +285,8 @@ async def register_tournament_callback(update: Update, context: CallbackContext)
         'user_id': user_id,
         'tournament_type': tournament_type,
         'status': 'pending',
-        'created_at': datetime.utcnow()
+        'created_at': datetime.utcnow(),
+        'payment_link_id': payment_id
     }
     
     # Send payment link to user
@@ -292,7 +299,8 @@ async def register_tournament_callback(update: Update, context: CallbackContext)
         f"🏆 Tournament: ₹{tournament_type}\n"
         f"💰 Entry Fee: ₹{tournament_type}\n"
         f"🏅 Prize: ₹{TOURNAMENTS[tournament_type]['prize']}\n\n"
-        f"Click below to complete your payment:",
+        f"Click below to complete your payment:\n\n"
+        f"⏰ <i>You will be notified once payment is confirmed.</i>",
         reply_markup=keyboard,
         parse_mode=ParseMode.HTML
     )
@@ -426,7 +434,15 @@ def process_payment_webhook(payment_data: Dict) -> bool:
             tournament_type = transaction['tournament_type']
             
             # Add to waiting approval
-            waiting_approvals[tournament_type].append(user_id)
+            if user_id not in waiting_approvals[tournament_type]:
+                waiting_approvals[tournament_type].append(user_id)
+            
+            # Add to payment queue for processing
+            payment_queue.put({
+                'user_id': user_id,
+                'tournament_type': tournament_type,
+                'payment_id': payment_id
+            })
             
             return True
             
@@ -446,6 +462,20 @@ async def notify_admin_payment(context: CallbackContext, user_id: int, tournamen
             [InlineKeyboardButton("❌ Decline", callback_data=f"decline_{user_id}")],
         ])
         
+        # Notify user about payment confirmation
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                f"✅ <b>Payment Confirmed!</b>\n\n"
+                f"💰 Tournament: ₹{tournament_type}\n"
+                f"🏅 Prize: ₹{TOURNAMENTS[tournament_type]['prize']}\n\n"
+                f"⏳ Your registration is now pending admin approval.\n"
+                f"You will be notified once approved!"
+            ),
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Notify admin
         await context.bot.send_message(
             chat_id=ADMIN_ID,
             text=(
@@ -466,8 +496,42 @@ async def error_handler(update: Update, context: CallbackContext):
     """Handle errors"""
     logger.error(f'Update {update} caused error {context.error}')
 
+async def process_payment_queue():
+    """Process payments from the queue"""
+    global bot_application
+    
+    while True:
+        try:
+            if not payment_queue.empty():
+                payment_info = payment_queue.get()
+                user_id = payment_info['user_id']
+                tournament_type = payment_info['tournament_type']
+                
+                if bot_application:
+                    await notify_admin_payment(bot_application, user_id, tournament_type)
+                    logger.info(f"Processed payment for user {user_id}, tournament ₹{tournament_type}")
+                
+            await asyncio.sleep(1)  # Check queue every second
+            
+        except Exception as e:
+            logger.error(f"Error processing payment queue: {e}")
+            await asyncio.sleep(5)
+
+def start_payment_processor():
+    """Start the payment processor in a separate thread"""
+    def run_processor():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(process_payment_queue())
+    
+    thread = threading.Thread(target=run_processor, daemon=True)
+    thread.start()
+    logger.info("Payment processor started")
+
 def main():
     """Main function to start the bot"""
+    global bot_application
+    
     if not TOKEN:
         logger.error("TELEGRAM_TOKEN not found in environment variables")
         return
@@ -476,6 +540,10 @@ def main():
     
     # Create application
     app = Application.builder().token(TOKEN).build()
+    bot_application = app
+    
+    # Start payment processor
+    start_payment_processor()
     
     # Add handlers
     app.add_handler(CommandHandler('start', start_command))
