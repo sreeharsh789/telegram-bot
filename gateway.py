@@ -7,8 +7,8 @@ import requests
 import hmac
 import hashlib
 import json
-import asyncio
 import threading
+import time
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,6 +20,9 @@ app = Flask(__name__)
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '1181844922'))
 PAYMENT_GATEWAY_SECRET = os.getenv('PAYMENT_GATEWAY_SECRET')
+
+# Global variables for bot communication
+pending_payments = {}
 
 
 def send_telegram_message(chat_id: int, text: str):
@@ -49,6 +52,22 @@ def verify_razorpay_signature(payload: str, signature: str, secret: str) -> bool
         return hmac.compare_digest(expected_signature, signature)
     except Exception as e:
         logger.error(f"Error verifying signature: {e}")
+        return False
+
+def send_telegram_message_with_keyboard(chat_id: int, text: str, keyboard: dict):
+    """Send message with inline keyboard via Telegram Bot API"""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {
+            'chat_id': chat_id,
+            'text': text,
+            'parse_mode': 'HTML',
+            'reply_markup': keyboard
+        }
+        response = requests.post(url, json=payload)
+        return response.status_code == 200
+    except Exception as e:
+        logger.error(f"Error sending Telegram message with keyboard: {e}")
         return False
 
 @app.route('/health', methods=['GET'])
@@ -84,12 +103,21 @@ def payment_webhook():
         
         logger.info(f"Received webhook event: {event}")
         
-        if event == 'payment_link.paid':
-            # Extract payment information
-            payment_link_id = payment_data.get('id')
-            amount = payment_data.get('amount', 0) // 100  # Convert from paise to rupees
-            status = payment_data.get('status')
-            customer_details = payment_data.get('customer', {})
+        if event in ['payment_link.paid', 'payment.captured']:
+            if event == 'payment_link.paid':
+                payment_data = webhook_data.get('payload', {}).get('payment_link', {})
+                payment_link_id = payment_data.get('id')
+                amount = payment_data.get('amount', 0) // 100
+                status = payment_data.get('status')
+                customer_details = payment_data.get('customer', {})
+                description = payment_data.get('description', '')
+            else:  # payment.captured
+                payment_data = webhook_data.get('payload', {}).get('payment', {}).get('entity', {})
+                payment_link_id = payment_data.get('id')
+                amount = payment_data.get('amount', 0) // 100
+                status = 'captured'
+                customer_details = {}
+                description = payment_data.get('description', '')
             
             # Determine tournament type based on amount
             tournament_type = None
@@ -100,43 +128,80 @@ def payment_webhook():
             elif amount == 50:
                 tournament_type = 50
             
-            if tournament_type and status == 'paid':
+            if tournament_type and status in ['paid', 'captured']:
                 # Extract user ID from customer details or description
                 user_id = None
-                description = payment_data.get('description', '')
                 if 'User ' in description:
                     try:
                         user_id = int(description.split('User ')[1].split(' ')[0])
                     except:
                         pass
                 
-                # Notify both user and admin about successful payment
-                message = (
+                # Try to extract from notes if description doesn't work
+                if not user_id:
+                    notes = payment_data.get('notes', {})
+                    if isinstance(notes, dict) and 'user_id' in notes:
+                        try:
+                            user_id = int(notes['user_id'])
+                        except:
+                            pass
+                
+                logger.info(f"Processing payment: Amount=₹{amount}, Tournament=₹{tournament_type}, User={user_id}")
+                
+                # Store payment info for bot to process
+                payment_key = f"{payment_link_id}_{int(time.time())}"
+                pending_payments[payment_key] = {
+                    'user_id': user_id,
+                    'tournament_type': tournament_type,
+                    'amount': amount,
+                    'payment_id': payment_link_id,
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+                
+                # Notify admin about successful payment
+                admin_message = (
                     f"💳 <b>Payment Received!</b>\n\n"
                     f"💰 Amount: ₹{amount}\n"
                     f"🏆 Tournament: ₹{tournament_type}\n"
                     f"🆔 Payment ID: {payment_link_id}\n"
                     f"👤 User ID: {user_id}\n"
                     f"⏰ Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC\n\n"
-                    f"Processing registration approval..."
+                    f"Click below to approve registration:"
                 )
                 
-                send_telegram_message(ADMIN_ID, message)
+                # Create approval keyboard
+                if user_id:
+                    keyboard = {
+                        "inline_keyboard": [
+                            [
+                                {"text": "✅ Approve", "callback_data": f"approve_{tournament_type}_{user_id}"},
+                                {"text": "❌ Decline", "callback_data": f"decline_{user_id}"}
+                            ]
+                        ]
+                    }
+                    
+                    send_telegram_message_with_keyboard(ADMIN_ID, admin_message, keyboard)
+                else:
+                    send_telegram_message(ADMIN_ID, admin_message)
                 
                 # If we have user ID, notify them too
                 if user_id:
                     user_message = (
                         f"✅ <b>Payment Confirmed!</b>\n\n"
                         f"💰 Tournament: ₹{tournament_type}\n"
-                        f"🏅 Prize Pool: ₹{50 if tournament_type == 30 else 80 if tournament_type == 50 else 25}\n\n"
+                        f"🏅 Prize: ₹{25 if tournament_type == 15 else 50 if tournament_type == 30 else 80}\n\n"
                         f"⏳ Your registration is being processed.\n"
                         f"You will receive approval notification shortly!"
                     )
                     send_telegram_message(user_id, user_message)
+                else:
+                    logger.warning(f"Could not extract user_id from payment data: {payment_data}")
                 
                 logger.info(f"Payment processed: ₹{amount} for tournament ₹{tournament_type}")
                 
                 return jsonify({'status': 'success', 'message': 'Payment processed'}), 200
+            else:
+                logger.warning(f"Payment not processed: tournament_type={tournament_type}, status={status}")
         
         return jsonify({'status': 'ignored', 'message': 'Event not handled'}), 200
         
@@ -253,6 +318,21 @@ def get_stats():
             '/stats'
         ],
         'timestamp': datetime.utcnow().isoformat()
+    }), 200
+
+@app.route('/pending-payments', methods=['GET'])
+def get_pending_payments():
+    """Get pending payments for bot processing"""
+    global pending_payments
+    
+    # Return and clear pending payments
+    payments = pending_payments.copy()
+    pending_payments.clear()
+    
+    return jsonify({
+        'status': 'success',
+        'payments': payments,
+        'count': len(payments)
     }), 200
 
 if __name__ == '__main__':

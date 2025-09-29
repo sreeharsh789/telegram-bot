@@ -8,8 +8,6 @@ from datetime import datetime, timedelta
 import requests
 import json
 import logging
-import threading
-from queue import Queue
 
 # Configure logging
 logging.basicConfig(
@@ -51,11 +49,6 @@ user_last_register_time: Dict[int, datetime] = {}
 interacted_users = set()
 first_time_users = set()
 waiting_approvals: Dict[int, List[int]] = {15: [], 30: [], 50: []}
-payment_transactions: Dict[str, Dict] = {}
-
-# Global application instance for webhook communication
-bot_application = None
-payment_queue = Queue()
 
 class PaymentGateway:
     """Payment gateway integration (Razorpay example)"""
@@ -76,12 +69,16 @@ class PaymentGateway:
                     "contact": "+919999999999",  # Default contact
                     "email": f"user{user_id}@example.com"
                 },
+                "notes": {
+                    "user_id": str(user_id),
+                    "tournament_type": str(tournament_type)
+                },
                 "notify": {
                     "sms": False,
                     "email": False
                 },
                 "reminder_enable": False,
-                "callback_url": f"{WEBHOOK_URL}/payment-success",
+                "callback_url": f"{WEBHOOK_URL}/payment-success?user_id={user_id}&tournament={tournament_type}",
                 "callback_method": "get"
             }
             
@@ -102,26 +99,6 @@ class PaymentGateway:
             logger.error(f"Error creating payment link: {e}")
             return None
     
-    @staticmethod
-    def verify_payment(payment_id: str) -> bool:
-        """Verify payment status"""
-        try:
-            url = f"https://api.razorpay.com/v1/payments/{payment_id}"
-            
-            response = requests.get(
-                url,
-                auth=(PAYMENT_GATEWAY_KEY, PAYMENT_GATEWAY_SECRET)
-            )
-            
-            if response.status_code == 200:
-                payment_data = response.json()
-                return payment_data.get('status') == 'captured'
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error verifying payment: {e}")
-            return False
 
 async def start_command(update: Update, context: CallbackContext) -> None:
     """Handle /start command"""
@@ -279,16 +256,6 @@ async def register_tournament_callback(update: Update, context: CallbackContext)
         )
         return
     
-    # Store transaction details
-    payment_id = payment_data.get('id')
-    payment_transactions[payment_id] = {
-        'user_id': user_id,
-        'tournament_type': tournament_type,
-        'status': 'pending',
-        'created_at': datetime.utcnow(),
-        'payment_link_id': payment_id
-    }
-    
     # Send payment link to user
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("💳 Pay Now", url=payment_data.get('short_url'))]
@@ -420,117 +387,12 @@ async def handle_message(update: Update, context: CallbackContext):
                 "🏆 To register for tournaments, use the /register command!"
             )
 
-def process_payment_webhook(payment_data: Dict) -> bool:
-    """Process payment webhook from gateway"""
-    try:
-        payment_id = payment_data.get('payment_link_id')
-        status = payment_data.get('status')
-        
-        if payment_id in payment_transactions and status == 'paid':
-            transaction = payment_transactions[payment_id]
-            transaction['status'] = 'completed'
-            
-            user_id = transaction['user_id']
-            tournament_type = transaction['tournament_type']
-            
-            # Add to waiting approval
-            if user_id not in waiting_approvals[tournament_type]:
-                waiting_approvals[tournament_type].append(user_id)
-            
-            # Add to payment queue for processing
-            payment_queue.put({
-                'user_id': user_id,
-                'tournament_type': tournament_type,
-                'payment_id': payment_id
-            })
-            
-            return True
-            
-    except Exception as e:
-        logger.error(f"Error processing payment webhook: {e}")
-    
-    return False
-
-async def notify_admin_payment(context: CallbackContext, user_id: int, tournament_type: int):
-    """Notify admin of successful payment"""
-    try:
-        user = await context.bot.get_chat(user_id)
-        user_mention = user.mention_html() if hasattr(user, 'mention_html') else f"User {user_id}"
-        
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Approve", callback_data=f"approve_{tournament_type}_{user_id}")],
-            [InlineKeyboardButton("❌ Decline", callback_data=f"decline_{user_id}")],
-        ])
-        
-        # Notify user about payment confirmation
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=(
-                f"✅ <b>Payment Confirmed!</b>\n\n"
-                f"💰 Tournament: ₹{tournament_type}\n"
-                f"🏅 Prize: ₹{TOURNAMENTS[tournament_type]['prize']}\n\n"
-                f"⏳ Your registration is now pending admin approval.\n"
-                f"You will be notified once approved!"
-            ),
-            parse_mode=ParseMode.HTML
-        )
-        
-        # Notify admin
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=(
-                f"🛑 <b>New Registration Request</b> 🛑\n\n"
-                f"👤 <b>User:</b> {user_mention}\n"
-                f"💰 <b>Tournament:</b> ₹{tournament_type}\n"
-                f"✅ <b>Payment:</b> Verified\n\n"
-                f"Approve or decline below:"
-            ),
-            parse_mode=ParseMode.HTML,
-            reply_markup=keyboard
-        )
-        
-    except Exception as e:
-        logger.error(f"Error notifying admin: {e}")
-
 async def error_handler(update: Update, context: CallbackContext):
     """Handle errors"""
     logger.error(f'Update {update} caused error {context.error}')
 
-async def process_payment_queue():
-    """Process payments from the queue"""
-    global bot_application
-    
-    while True:
-        try:
-            if not payment_queue.empty():
-                payment_info = payment_queue.get()
-                user_id = payment_info['user_id']
-                tournament_type = payment_info['tournament_type']
-                
-                if bot_application:
-                    await notify_admin_payment(bot_application, user_id, tournament_type)
-                    logger.info(f"Processed payment for user {user_id}, tournament ₹{tournament_type}")
-                
-            await asyncio.sleep(1)  # Check queue every second
-            
-        except Exception as e:
-            logger.error(f"Error processing payment queue: {e}")
-            await asyncio.sleep(5)
-
-def start_payment_processor():
-    """Start the payment processor in a separate thread"""
-    def run_processor():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(process_payment_queue())
-    
-    thread = threading.Thread(target=run_processor, daemon=True)
-    thread.start()
-    logger.info("Payment processor started")
-
 def main():
     """Main function to start the bot"""
-    global bot_application
     
     if not TOKEN:
         logger.error("TELEGRAM_TOKEN not found in environment variables")
@@ -540,10 +402,6 @@ def main():
     
     # Create application
     app = Application.builder().token(TOKEN).build()
-    bot_application = app
-    
-    # Start payment processor
-    start_payment_processor()
     
     # Add handlers
     app.add_handler(CommandHandler('start', start_command))
